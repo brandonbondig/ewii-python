@@ -8,7 +8,7 @@ Query meters, daily kWh, contracts, and more from Python or expose them through 
 
 | Method                                | Description                                                           |
 | ------------------------------------- | --------------------------------------------------------------------- |
-| `login(headless=False)`               | Interactive MitID login; copies cookies into your `requests.Session`. |
+| `login()`               | Interactive MitID login; copies cookies into your `requests.Session`. |
 | `get_consumption(from, to, meter_id)` | Array of daily kWh values.                                              |
 | `get_individ_oplysninger()`           | Personal/identity data.                                               |
 | `get_aftaler()`                       | Active contracts.                                                     |
@@ -34,7 +34,7 @@ from datetime import date
 from ewii import EwiiClient
 
 client = EwiiClient()
-client.login(headless=True)
+client.login()
 
 info = client.get_info()
 meter = info["forbrugssteder"][0]["maalepunkter"][0]["maalepunktId"]
