@@ -1,25 +1,50 @@
+import json
+import logging
 from html import unescape
 from typing import Optional
 
-import json
 import requests as re
-from rich import print
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
+from rich.logging import RichHandler
 
+from .EwiiError import EwiiAPIError
+from .Settings import Settings
+
+settings = Settings()
+
+logging.basicConfig(
+    level="INFO",
+    format="%(message)s",
+    handlers=[RichHandler()]
+)
 
 class EwiiClient:
-    BASE_URL = "https://www.ewii.dk"
-    LOGIN_PAGE = f"{BASE_URL}/privat/login-oidc"
-    HOME_URL = f"{BASE_URL}/privat/"
-    BASE_API = f"{BASE_URL}/api"            
-
-    TOKEN_ENDPOINT = "https://netseidbroker.mitid.dk/connect/token"
-    CLIENT_ID = "416f6384-b429-4f71-bcbe-163e503260b1"
-    
+    """
+    Client for interacting with the EWII API.
+    This client handles authentication, session management, and provides methods
+    to access various endpoints of the EWII API.
+    """
 
     def __init__(self, session: Optional[re.Session] = None):
+        self.settings = settings or Settings()
         self.session = session or re.Session()
+        self.BASE_URL = self.settings.BASE_URL
+        self.LOGIN_PAGE = f"{self.BASE_URL}/privat/login-oidc"
+        self.HOME_URL = f"{self.BASE_URL}/privat/"
+        self.BASE_API = f"{self.BASE_URL}/api"
+        self.timeout = 15
+
+        self.logger = logging.getLogger(__name__)
+
+    def _request(self, method: str, path: str, **kwargs):
+        url = f"{self.BASE_API}/{path}"
+        try:
+            resp = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            resp.raise_for_status()
+        except re.HTTPError as e:
+            raise EwiiAPIError(f"{method} {url} failed: {e}") from e
+        return resp.json()
 
 
     def _get_session(self):
@@ -28,14 +53,13 @@ class EwiiClient:
 
 
     def _api_get(self, path: str, **params):
-        r = self.session.get(f"{self.BASE_API}/{path}", params=params, timeout=15)
-        r.raise_for_status()
-        return r.json()
+        """Make a GET request to the EWII API."""
+        return self._request("GET", path, params=params)
     
 
     def _keep_alive(self):
         """Keep the session alive by making a request to the API."""
-        self.session.get("https://www.ewii.dk/api/aftaler", timeout=15)
+        self._request("GET", "aftaler")
     
 
     def login(self, headless: bool = False) -> None:
@@ -45,11 +69,11 @@ class EwiiClient:
             ctx = browser.new_context()
             page = ctx.new_page()
 
-            print("[bold]Opening MitID login page…[/]")
+            self.logger.info("[bold]Opening MitID login page…[/]")
             page.goto(self.LOGIN_PAGE, wait_until="load")
             
             page.wait_for_url(self.HOME_URL + "*")
-            print("[green] Logged in - dashboard loaded[/]")
+            self.logger.info("[green] Logged in - dashboard loaded[/]")
 
             for ck in ctx.cookies(self.BASE_URL):
                 self.session.cookies.set(
@@ -96,24 +120,12 @@ class EwiiClient:
         resp.raise_for_status()
         html = resp.text
 
-        if BeautifulSoup:
-            soup = BeautifulSoup(html, "html.parser")
-            div  = soup.find("div", class_="ewii-selfservice--context-data")
-            if div is None:
-                raise RuntimeError("context <div> not found in /privat HTML")
-            attrs = div.attrs
-        else:
-            
-            import re
-            match = re.search(
-                r'<div class="ewii-selfservice--context-data"([^>]+)>', html, re.I
-            )
-            if not match:
-                raise RuntimeError("context <div> not found (no BeautifulSoup)")
-            raw_attrs = match.group(1)
-            attrs = dict(re.findall(r'data-([^=]+)="([^"]*)"', raw_attrs))
+        soup = BeautifulSoup(html, "html.parser")
+        div  = soup.find("div", class_="ewii-selfservice--context-data")
+        if div is None:
+            raise RuntimeError("context <div> not found in /privat HTML")
+        attrs = div.attrs
 
-        
         ctx_type         = attrs.get("data-individ-context-type")
         forbrugs_raw     = attrs.get("data-individ-forbrugssteder")
         virksomheder_raw = attrs.get("data-individ-virksomheder")
